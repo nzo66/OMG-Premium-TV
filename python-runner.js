@@ -16,7 +16,7 @@ class PythonRunner {
         this.scriptUrl = null;
         this.cronJob = null;
         this.updateInterval = null;
-        
+
         // Crea la directory temp se non esiste
         if (!fs.existsSync(path.join(__dirname, 'temp'))) {
             fs.mkdirSync(path.join(__dirname, 'temp'));
@@ -32,10 +32,10 @@ class PythonRunner {
         try {
             console.log(`\n=== Download script Python da ${url} ===`);
             this.scriptUrl = url;
-            
+
             const response = await axios.get(url, { responseType: 'text' });
             fs.writeFileSync(this.scriptPath, response.data);
-            
+
             console.log('✓ Script Python scaricato con successo');
             return true;
         } catch (error) {
@@ -64,48 +64,48 @@ class PythonRunner {
         try {
             this.isRunning = true;
             console.log('\n=== Esecuzione script Python ===');
-            
+
             // Elimina eventuali file M3U esistenti prima dell'esecuzione
             this.cleanupM3UFiles();
-            
+
             // Controlla se Python è installato
-            await execAsync('python3 --version').catch(() => 
+            await execAsync('python3 --version').catch(() =>
                 execAsync('python --version')
             );
-            
+
             // Esegui lo script Python
             const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
             const { stdout, stderr } = await execAsync(`${pythonCmd} ${this.scriptPath}`);
-            
+
             if (stderr) {
                 console.warn('⚠️ Warning durante l\'esecuzione:', stderr);
             }
-            
+
             console.log('Output script:', stdout);
-            
+
             // Cerca qualsiasi file M3U/M3U8 generato e rinominalo
             const foundFiles = this.findAllM3UFiles();
-            
+
             if (foundFiles.length > 0) {
                 console.log(`✓ Trovati ${foundFiles.length} file M3U/M3U8`);
-                
+
                 // Prendi il primo file trovato e rinominalo
                 const sourcePath = foundFiles[0];
-                
+
                 // Se il file destinazione esiste già, eliminalo
                 if (fs.existsSync(this.m3uOutputPath)) {
                     fs.unlinkSync(this.m3uOutputPath);
                 }
-                
+
                 // Rinomina o copia il file
                 if (sourcePath !== this.m3uOutputPath) {
                     fs.copyFileSync(sourcePath, this.m3uOutputPath);
                     console.log(`✓ File rinominato/copiato da "${sourcePath}" a "${this.m3uOutputPath}"`);
-                    
+
                     // Opzionale: elimina il file originale dopo la copia
                     // fs.unlinkSync(sourcePath);
                 }
-                
+
                 this.lastExecution = new Date();
                 this.lastError = null;
                 this.isRunning = false;
@@ -121,7 +121,7 @@ class PythonRunner {
                     this.isRunning = false;
                     return true;
                 }
-                
+
                 console.error('❌ Nessun file M3U trovato dopo l\'esecuzione dello script');
                 this.lastError = 'File M3U non generato dallo script';
                 this.isRunning = false;
@@ -143,30 +143,30 @@ class PythonRunner {
     scheduleUpdate(timeFormat) {
         // Ferma eventuali pianificazioni esistenti
         this.stopScheduledUpdates();
-        
+
         // Validazione del formato orario
         if (!timeFormat || !/^\d{1,2}:\d{2}$/.test(timeFormat)) {
             console.error('❌ Formato orario non valido. Usa HH:MM o H:MM');
             this.lastError = 'Formato orario non valido. Usa HH:MM o H:MM';
             return false;
         }
-        
+
         try {
             // Estrai ore e minuti
             const [hours, minutes] = timeFormat.split(':').map(Number);
-            
+
             if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
                 console.error('❌ Orario non valido. Ore: 0-23, Minuti: 0-59');
                 this.lastError = 'Orario non valido. Ore: 0-23, Minuti: 0-59';
                 return false;
             }
-            
+
             // Crea una pianificazione cron
             // Se è 0:30, esegui ogni 30 minuti
             // Se è 1:00, esegui ogni ora
             // Se è 12:00, esegui ogni 12 ore
             let cronExpression;
-            
+
             if (hours === 0) {
                 // Esegui ogni X minuti
                 cronExpression = `*/${minutes} * * * *`;
@@ -176,25 +176,21 @@ class PythonRunner {
                 cronExpression = `${minutes} */${hours} * * *`;
                 console.log(`✓ Pianificazione impostata: ogni ${hours} ore e ${minutes} minuti`);
             }
-            
+
             this.cronJob = cron.schedule(cronExpression, async () => {
                 console.log(`\n=== Esecuzione automatica script Python (${new Date().toLocaleString()}) ===`);
                 const success = await this.executeScript();
-                
+
                 // Dopo l'esecuzione dello script, aggiorna la cache se necessario
                 if (success) {
                     try {
-                        // Ottieni le istanze necessarie
-                        const config = require('./config');
-                        const CacheManager = require('./cache-manager')(config);
-                        
                         // Usa l'URL attualmente configurato nella cache
-                        const currentM3uUrl = CacheManager.cache.m3uUrl;
-                        
+                        const currentM3uUrl = global.CacheManager.cache.m3uUrl;
+
                         if (currentM3uUrl) {
                             console.log(`\n=== Ricostruzione cache dopo esecuzione automatica dello script ===`);
                             console.log(`Utilizzo l'URL corrente: ${currentM3uUrl}`);
-                            await CacheManager.rebuildCache(currentM3uUrl);
+                            await global.CacheManager.rebuildCache(currentM3uUrl);
                             console.log(`✓ Cache ricostruita con successo dopo esecuzione automatica`);
                         } else {
                             console.log(`❌ Nessun URL M3U configurato nella cache, impossibile ricostruire`);
@@ -204,7 +200,7 @@ class PythonRunner {
                     }
                 }
             });
-            
+
             this.updateInterval = timeFormat;
             console.log(`✓ Aggiornamento automatico configurato: ${timeFormat}`);
             return true;
@@ -214,7 +210,7 @@ class PythonRunner {
             return false;
         }
     }
-    
+
     /**
      * Ferma gli aggiornamenti pianificati
      */
@@ -237,10 +233,10 @@ class PythonRunner {
         try {
             // Trova tutti i file M3U e M3U8 nella directory
             const dirFiles = fs.readdirSync(__dirname);
-            const m3uFiles = dirFiles.filter(file => 
+            const m3uFiles = dirFiles.filter(file =>
                 file.endsWith('.m3u') || file.endsWith('.m3u8')
             );
-    
+
             // Elimina ogni file M3U/M3U8 trovato
             m3uFiles.forEach(file => {
                 const fullPath = path.join(__dirname, file);
@@ -251,7 +247,7 @@ class PythonRunner {
                     console.error(`Errore nell'eliminazione del file ${fullPath}:`, e.message);
                 }
             });
-    
+
             console.log(`✓ Eliminati ${m3uFiles.length} file M3U/M3U8`);
         } catch (error) {
             console.error('❌ Errore nella pulizia dei file M3U:', error.message);
@@ -282,11 +278,11 @@ class PythonRunner {
         // Cerca percorsi che terminano con .m3u o .m3u8
         const m3uPathRegex = /[\w\/\\\.]+\.m3u8?\b/g;
         const matches = output.match(m3uPathRegex);
-        
+
         if (matches && matches.length > 0) {
             return matches[0];
         }
-        
+
         return null;
     }
 
@@ -294,108 +290,108 @@ class PythonRunner {
      * Legge il contenuto del file M3U generato
      * @returns {string|null} - Il contenuto del file M3U o null se non esiste
      */
-// Aggiungi questa funzione al file python-runner.js, subito prima di getM3UContent()
+    // Aggiungi questa funzione al file python-runner.js, subito prima di getM3UContent()
 
-/**
- * Aggiunge il canale speciale per la rigenerazione della playlist alla fine del file M3U
- * @returns {boolean} - true se l'operazione è avvenuta con successo
- */
+    /**
+     * Aggiunge il canale speciale per la rigenerazione della playlist alla fine del file M3U
+     * @returns {boolean} - true se l'operazione è avvenuta con successo
+     */
     addRegenerateChannel() {
         try {
             if (!fs.existsSync(this.m3uOutputPath)) {
                 console.error('❌ File M3U non trovato, impossibile aggiungere canale di rigenerazione');
                 return false;
             }
-    
+
             console.log('Aggiunta canale di rigenerazione al file M3U...');
-            
+
             // Leggi il contenuto attuale del file
             const currentContent = fs.readFileSync(this.m3uOutputPath, 'utf8');
-            
+
             // Prepara l'entry del canale speciale
 
             const specialChannel = `
 #EXTINF:-1 tvg-id="rigeneraplaylistpython" tvg-name="Rigenera Playlist Python" tvg-logo="https://raw.githubusercontent.com/mccoy88f/OMG-TV-Stremio-Addon/refs/heads/main/tv.png" group-title="~SETTINGS~",Rigenera Playlist Python
 http://127.0.0.1/regenerate`;
-            
+
             // Verifica se il canale già esiste nel file
             if (currentContent.includes('tvg-id="rigeneraplaylistpython"')) {
                 console.log('Il canale di rigenerazione è già presente nel file M3U');
                 return true;
             }
-            
+
             // Aggiungi il canale speciale alla fine del file
             fs.appendFileSync(this.m3uOutputPath, specialChannel);
             console.log('✓ Canale di rigenerazione aggiunto con successo al file M3U');
-            
+
             return true;
         } catch (error) {
             console.error('❌ Errore nell\'aggiunta del canale di rigenerazione:', error.message);
             return false;
         }
     }
-    
+
     // Modifica la funzione executeScript per chiamare addRegenerateChannel
     async executeScript() {
         if (this.isRunning) {
             console.log('⚠️ Un\'esecuzione è già in corso, attendere...');
             return false;
         }
-    
+
         if (!fs.existsSync(this.scriptPath)) {
             console.error('❌ Script Python non trovato. Eseguire prima downloadScript()');
             this.lastError = 'Script Python non trovato';
             return false;
         }
-    
+
         try {
             this.isRunning = true;
             console.log('\n=== Esecuzione script Python ===');
-            
+
             // Elimina eventuali file M3U esistenti prima dell'esecuzione
             this.cleanupM3UFiles();
-            
+
             // Controlla se Python è installato
-            await execAsync('python3 --version').catch(() => 
+            await execAsync('python3 --version').catch(() =>
                 execAsync('python --version')
             );
-            
+
             // Esegui lo script Python
             const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
             const { stdout, stderr } = await execAsync(`${pythonCmd} ${this.scriptPath}`);
-            
+
             if (stderr) {
                 console.warn('⚠️ Warning durante l\'esecuzione:', stderr);
             }
-            
+
             console.log('Output script:', stdout);
-            
+
             // Cerca qualsiasi file M3U/M3U8 generato e rinominalo
             const foundFiles = this.findAllM3UFiles();
-            
+
             if (foundFiles.length > 0) {
                 console.log(`✓ Trovati ${foundFiles.length} file M3U/M3U8`);
-                
+
                 // Prendi il primo file trovato e rinominalo
                 const sourcePath = foundFiles[0];
-                
+
                 // Se il file destinazione esiste già, eliminalo
                 if (fs.existsSync(this.m3uOutputPath)) {
                     fs.unlinkSync(this.m3uOutputPath);
                 }
-                
+
                 // Rinomina o copia il file
                 if (sourcePath !== this.m3uOutputPath) {
                     fs.copyFileSync(sourcePath, this.m3uOutputPath);
                     console.log(`✓ File rinominato/copiato da "${sourcePath}" a "${this.m3uOutputPath}"`);
-                    
+
                     // Opzionale: elimina il file originale dopo la copia
                     // fs.unlinkSync(sourcePath);
                 }
-                
+
                 // Aggiungi il canale di rigenerazione
                 this.addRegenerateChannel();
-                
+
                 this.lastExecution = new Date();
                 this.lastError = null;
                 this.isRunning = false;
@@ -406,16 +402,16 @@ http://127.0.0.1/regenerate`;
                 if (possiblePath && fs.existsSync(possiblePath)) {
                     fs.copyFileSync(possiblePath, this.m3uOutputPath);
                     console.log(`✓ File M3U trovato in ${possiblePath} e copiato in ${this.m3uOutputPath}`);
-                    
+
                     // Aggiungi il canale di rigenerazione
                     this.addRegenerateChannel();
-                    
+
                     this.lastExecution = new Date();
                     this.lastError = null;
                     this.isRunning = false;
                     return true;
                 }
-                
+
                 console.error('❌ Nessun file M3U trovato dopo l\'esecuzione dello script');
                 this.lastError = 'File M3U non generato dallo script';
                 this.isRunning = false;
@@ -428,19 +424,19 @@ http://127.0.0.1/regenerate`;
             return false;
         }
     }
-    
+
     getM3UContent() {
         try {
             if (fs.existsSync(this.m3uOutputPath)) {
                 return fs.readFileSync(this.m3uOutputPath, 'utf8');
             }
-            
+
             // Se il file standard non esiste, cerca altri file M3U
             const files = this.findAllM3UFiles();
             if (files.length > 0) {
                 return fs.readFileSync(files[0], 'utf8');
             }
-            
+
             return null;
         } catch (error) {
             console.error('❌ Errore nella lettura del file M3U:', error.message);
@@ -462,7 +458,7 @@ http://127.0.0.1/regenerate`;
      */
     getStatus() {
         const m3uFiles = this.findAllM3UFiles();
-        
+
         return {
             isRunning: this.isRunning,
             lastExecution: this.lastExecution ? this.formatDate(this.lastExecution) : 'Mai',

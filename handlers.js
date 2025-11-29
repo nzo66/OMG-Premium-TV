@@ -1,5 +1,4 @@
 const config = require('./config');
-const CacheManager = require('./cache-manager')(config);
 const EPGManager = require('./epg-manager');
 const StreamProxyManager = require('./stream-proxy-manager')(config);
 const ResolverStreamManager = require('./resolver-stream-manager')(config);
@@ -15,22 +14,22 @@ function normalizeId(id) {
 function cleanNameForImage(name) {
     // Prima rimuoviamo la data e l'ora se presente (pattern: dd/dd/dd - dd:dd (CET))
     let cleaned = name.replace(/\d{2}\/\d{2}\/\d{2}\s*-\s*\d{2}:\d{2}\s*\(CET\)/g, '').trim();
-    
+
     // Rimuoviamo l'anno se inizia con esso
     cleaned = cleaned.replace(/^20\d{2}\s+/, '');
-    
+
     // Rimuoviamo caratteri speciali mantenendo spazi e trattini
     cleaned = cleaned.replace(/[^a-zA-Z0-9\s-]/g, '');
-    
+
     // Rimuoviamo spazi multipli
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    
+
     // Prendiamo solo la parte principale del nome
     let parts = cleaned.split(' - ');
     if (parts.length > 1) {
         cleaned = parts[0].trim();
     }
-    
+
     // Se ancora troppo lungo, tronchiamo preservando parole intere
     if (cleaned.length > 30) {
         let words = cleaned.split(' ');
@@ -44,7 +43,7 @@ function cleanNameForImage(name) {
         }
         cleaned = result + '...';
     }
-    
+
     return cleaned || 'No Name';
 }
 
@@ -56,23 +55,23 @@ async function catalogHandler({ type, id, extra, config: userConfig }) {
         }
 
         // Aggiorna sempre la configurazione
-        await CacheManager.updateConfig(userConfig);
+        await global.CacheManager.updateConfig(userConfig);
 
         // Se l'EPG è abilitato, inizializzalo
         if (userConfig.epg_enabled === 'true') {
             const epgToUse = userConfig.epg ||
-                (CacheManager.cache.epgUrls && 
-                CacheManager.cache.epgUrls.length > 0
-                    ? CacheManager.cache.epgUrls.join(',')
+                (global.CacheManager.cache.epgUrls &&
+                    global.CacheManager.cache.epgUrls.length > 0
+                    ? global.CacheManager.cache.epgUrls.join(',')
                     : null);
-                    
+
             if (epgToUse) {
                 await EPGManager.initializeEPG(epgToUse);
             }
         }
 
         let { search, genre, skip = 0 } = extra || {};
-        
+
         if (genre && genre.includes('&skip')) {
             const parts = genre.split('&skip');
             genre = parts[0];
@@ -83,20 +82,20 @@ async function catalogHandler({ type, id, extra, config: userConfig }) {
 
         // Se riceviamo un nuovo filtro (search o genre), lo salviamo
         if (search) {
-            CacheManager.setLastFilter('search', search);
+            global.CacheManager.setLastFilter('search', search);
         } else if (genre) {
-            CacheManager.setLastFilter('genre', genre);
+            global.CacheManager.setLastFilter('genre', genre);
         } else if (!skip) {
             // Se non c'è skip, significa che è una nuova richiesta senza filtri
-            CacheManager.clearLastFilter();
+            global.CacheManager.clearLastFilter();
         }
 
         skip = parseInt(skip) || 0;
         const ITEMS_PER_PAGE = 100;
-        
+
         // Otteniamo i canali già filtrati
-        let filteredChannels = CacheManager.getFilteredChannels();
-        const cachedData = CacheManager.getCachedData();
+        let filteredChannels = global.CacheManager.getFilteredChannels();
+        const cachedData = global.CacheManager.getCachedData();
 
         const paginatedChannels = filteredChannels.slice(skip, skip + ITEMS_PER_PAGE);
 
@@ -106,7 +105,7 @@ async function catalogHandler({ type, id, extra, config: userConfig }) {
             const fallbackLogo = `https://dummyimage.com/500x500/590b8a/ffffff.jpg&text=${encodedName}`;
             const language = getLanguageFromConfig(userConfig);
             const languageAbbr = language.substring(0, 3).toUpperCase();
-            
+
             const meta = {
                 id: channel.id,
                 type: 'tv',
@@ -196,27 +195,27 @@ async function streamHandler({ id, config: userConfig }) {
         }
 
         // Aggiorna sempre la configurazione
-        await CacheManager.updateConfig(userConfig);
+        await global.CacheManager.updateConfig(userConfig);
 
         const channelId = id.split('|')[1];
-        
+
         // Gestione canale speciale per la rigenerazione playlist
         if (channelId === 'rigeneraplaylistpython') {
             console.log('\n=== Richiesta rigenerazione playlist Python ===');
-        
-            
+
+
             // Esegui lo script Python
             const PythonRunner = require('./python-runner');
             const result = await PythonRunner.executeScript();
-            
+
             if (result) {
                 console.log('✓ Script Python eseguito con successo');
-                
+
                 // Ricostruisci la cache
                 console.log('Ricostruzione cache con il nuovo file generato...');
-                await CacheManager.rebuildCache(userConfig.m3u, userConfig);
-                
-                return { 
+                await global.CacheManager.rebuildCache(userConfig.m3u, userConfig);
+
+                return {
                     streams: [{
                         name: 'Completato',
                         title: '✅ Playlist rigenerata con successo!\n Riavvia stremio o torna indietro.',
@@ -229,7 +228,7 @@ async function streamHandler({ id, config: userConfig }) {
                 };
             } else {
                 console.log('❌ Errore nell\'esecuzione dello script Python');
-                return { 
+                return {
                     streams: [{
                         name: 'Errore',
                         title: `❌ Errore: ${PythonRunner.lastError || 'Errore sconosciuto'}`,
@@ -242,9 +241,9 @@ async function streamHandler({ id, config: userConfig }) {
                 };
             }
         }
-        
+
         // Continua con il normale flusso per gli altri canali
-        const channel = CacheManager.getChannel(channelId);
+        const channel = global.CacheManager.getChannel(channelId);
 
         if (!channel) {
             console.log('Canale non trovato:', channelId);
@@ -261,7 +260,7 @@ async function streamHandler({ id, config: userConfig }) {
                 if (!headers['User-Agent']) {
                     headers['User-Agent'] = config.defaultUserAgent;
                 }
-                
+
                 originalStreamDetails.push({
                     name: channel.name,
                     originalName: stream.name,
@@ -274,7 +273,7 @@ async function streamHandler({ id, config: userConfig }) {
 
         if (userConfig.resolver_enabled === 'true' && userConfig.resolver_script) {
             console.log(`\n=== Utilizzo Resolver per ${channel.name} ===`);
-            
+
             try {
                 const streamDetails = {
                     name: channel.name,
@@ -283,17 +282,17 @@ async function streamHandler({ id, config: userConfig }) {
                         urls: channel.streamInfo.urls
                     }
                 };
-                
+
                 const resolvedStreams = await ResolverStreamManager.getResolvedStreams(streamDetails, userConfig);
-                
+
                 if (resolvedStreams && resolvedStreams.length > 0) {
                     console.log(`✓ Ottenuti ${resolvedStreams.length} flussi risolti`);
-                    
+
                     if (userConfig.force_proxy === 'true') {
                         // Se force_proxy è attivo, mostriamo SOLO i flussi passati attraverso il proxy
                         if (userConfig.proxy && userConfig.proxy_pwd) {
                             console.log('⚙️ Applicazione proxy ai flussi risolti (modalità forzata)...');
-                            
+
                             for (const resolvedStream of resolvedStreams) {
                                 const proxyStreamDetails = {
                                     name: resolvedStream.name,
@@ -301,11 +300,11 @@ async function streamHandler({ id, config: userConfig }) {
                                     url: resolvedStream.url,
                                     headers: resolvedStream.headers || {}
                                 };
-                                
+
                                 const proxiedResolvedStreams = await StreamProxyManager.getProxyStreams(proxyStreamDetails, userConfig);
                                 streams.push(...proxiedResolvedStreams);
                             }
-                            
+
                             if (streams.length === 0) {
                                 console.log('⚠️ Nessun proxy valido per i flussi risolti e force_proxy è attivo, nessun flusso disponibile');
                             }
@@ -317,11 +316,11 @@ async function streamHandler({ id, config: userConfig }) {
                         // Se force_proxy NON è attivo:
                         // 1. Aggiungiamo prima i flussi risolti originali
                         streams = resolvedStreams;
-                        
+
                         // 2. Aggiungiamo anche i flussi risolti tramite proxy, se il proxy è configurato
                         if (userConfig.proxy && userConfig.proxy_pwd) {
                             console.log('⚙️ Aggiunta dei flussi proxy ai flussi risolti...');
-                            
+
                             for (const resolvedStream of resolvedStreams) {
                                 const proxyStreamDetails = {
                                     name: resolvedStream.name,
@@ -329,7 +328,7 @@ async function streamHandler({ id, config: userConfig }) {
                                     url: resolvedStream.url,
                                     headers: resolvedStream.headers || {}
                                 };
-                                
+
                                 const proxiedResolvedStreams = await StreamProxyManager.getProxyStreams(proxyStreamDetails, userConfig);
                                 streams.push(...proxiedResolvedStreams);
                             }
@@ -396,7 +395,7 @@ async function streamHandler({ id, config: userConfig }) {
 // Funzione ausiliaria per processare gli stream originali (codice esistente estratto)
 async function processOriginalStreams(originalStreamDetails, channel, userConfig) {
     let streams = [];
-    
+
     if (userConfig.force_proxy === 'true') {
         if (userConfig.proxy && userConfig.proxy_pwd) {
             for (const streamDetails of originalStreamDetails) {
@@ -428,7 +427,7 @@ async function processOriginalStreams(originalStreamDetails, channel, userConfig
             }
         }
     }
-    
+
     return streams;
 }
 

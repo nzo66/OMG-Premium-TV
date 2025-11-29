@@ -1,5 +1,4 @@
 const config = require('./config');
-const CacheManager = require('./cache-manager')(config);
 const EPGManager = require('./epg-manager');
 
 function normalizeId(id) {
@@ -7,7 +6,7 @@ function normalizeId(id) {
 }
 
 function enrichWithDetailedEPG(meta, channelId, userConfig) {
-    
+
     if (!userConfig.epg_enabled) {
         console.log('❌ EPG non abilitato');
         return meta;
@@ -17,14 +16,14 @@ function enrichWithDetailedEPG(meta, channelId, userConfig) {
 
     const currentProgram = EPGManager.getCurrentProgram(normalizedId);
 
-    
+
     const upcomingPrograms = EPGManager.getUpcomingPrograms(normalizedId);
 
     if (currentProgram) {
         let description = [];
-        
+
         description.push('📺 IN ONDA ORA:', currentProgram.title);
-        
+
         if (currentProgram.description) {
             description.push('', currentProgram.description);
         }
@@ -61,22 +60,22 @@ function enrichWithDetailedEPG(meta, channelId, userConfig) {
 
 async function metaHandler({ type, id, config: userConfig }) {
     try {
-        
+
         if (!userConfig.m3u) {
             console.log('❌ URL M3U mancante');
             return { meta: null };
         }
 
-        if (CacheManager.cache.m3uUrl !== userConfig.m3u) {
+        if (global.CacheManager.cache.m3uUrl !== userConfig.m3u) {
             console.log('Cache M3U non aggiornata, ricostruzione...');
-            await CacheManager.rebuildCache(userConfig.m3u, userConfig);
+            await global.CacheManager.rebuildCache(userConfig.m3u, userConfig);
         }
 
         const channelId = id.split('|')[1];
-        
+
         // Usa direttamente getChannel dalla cache, che ora gestisce correttamente i suffissi
-        const channel = CacheManager.getChannel(channelId);
-        
+        const channel = global.CacheManager.getChannel(channelId);
+
         if (!channel) {
             console.log('=== Fine Meta Handler ===\n');
             return { meta: null };
@@ -87,7 +86,7 @@ async function metaHandler({ type, id, config: userConfig }) {
         const meta = {
             id: channel.id,
             type: 'tv',
-            name: channel.streamInfo?.tvg?.chno 
+            name: channel.streamInfo?.tvg?.chno
                 ? `${channel.streamInfo.tvg.chno}. ${channel.name}`
                 : channel.name,
             poster: channel.poster || channel.logo,
@@ -117,7 +116,7 @@ async function metaHandler({ type, id, config: userConfig }) {
         }
 
         let baseDescription = [];
-        
+
         if (channel.streamInfo?.tvg?.chno) {
             baseDescription.push(`📺 Canale ${channel.streamInfo.tvg.chno}`);
         }

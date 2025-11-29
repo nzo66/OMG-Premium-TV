@@ -6,7 +6,7 @@ const { catalogHandler, streamHandler } = require('./handlers');
 const metaHandler = require('./meta-handler');
 const EPGManager = require('./epg-manager');
 const config = require('./config');
-const CacheManager = require('./cache-manager')(config);
+const CacheManagerFactory = require('./cache-manager');
 const { renderConfigPage } = require('./views');
 const PythonRunner = require('./python-runner');
 const ResolverStreamManager = require('./resolver-stream-manager')();
@@ -20,9 +20,9 @@ app.use(express.urlencoded({ extended: true }));
 
 // Route principale - supporta sia il vecchio che il nuovo sistema
 app.get('/', async (req, res) => {
-   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-   const host = req.headers['x-forwarded-host'] || req.get('host');
-   res.send(renderConfigPage(protocol, host, req.query, config.manifest));
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.headers['x-forwarded-host'] || req.get('host');
+    res.send(renderConfigPage(protocol, host, req.query, config.manifest));
 });
 
 // Nuova route per la configurazione codificata
@@ -32,14 +32,14 @@ app.get('/:config/configure', async (req, res) => {
         const host = req.headers['x-forwarded-host'] || req.get('host');
         const configString = Buffer.from(req.params.config, 'base64').toString();
         const decodedConfig = Object.fromEntries(new URLSearchParams(configString));
-        
+
         // Inizializza il generatore Python se configurato
         if (decodedConfig.python_script_url) {
             console.log('Inizializzazione Script Python Generatore dalla configurazione');
             try {
                 // Scarica lo script Python se non già scaricato
                 await PythonRunner.downloadScript(decodedConfig.python_script_url);
-                
+
                 // Se è stato definito un intervallo di aggiornamento, impostalo
                 if (decodedConfig.python_update_interval) {
                     console.log('Impostazione dell\'aggiornamento automatico del generatore Python');
@@ -49,7 +49,7 @@ app.get('/:config/configure', async (req, res) => {
                 console.error('Errore nell\'inizializzazione dello script Python:', pythonError);
             }
         }
-        
+
         res.send(renderConfigPage(protocol, host, decodedConfig, config.manifest));
     } catch (error) {
         console.error('Errore nella configurazione:', error);
@@ -66,11 +66,11 @@ app.get('/manifest.json', async (req, res) => {
         if (req.query.resolver_update_interval) {
             configUrl += `&resolver_update_interval=${encodeURIComponent(req.query.resolver_update_interval)}`;
         }
-        if (req.query.m3u && CacheManager.cache.m3uUrl !== req.query.m3u) {
-            await CacheManager.rebuildCache(req.query.m3u);
+        if (req.query.m3u && global.CacheManager.cache.m3uUrl !== req.query.m3u) {
+            await global.CacheManager.rebuildCache(req.query.m3u);
         }
-        
-        const { genres } = CacheManager.getCachedData();
+
+        const { genres } = global.CacheManager.getCachedData();
         const manifestConfig = {
             ...config.manifest,
             catalogs: [{
@@ -98,15 +98,15 @@ app.get('/manifest.json', async (req, res) => {
             }
         };
         const builder = new addonBuilder(manifestConfig);
-        
+
         if (req.query.epg_enabled === 'true') {
             // Se non è stato fornito manualmente un EPG URL, usa quello della playlist
-            const epgToUse = req.query.epg || 
-                (CacheManager.getCachedData().epgUrls && 
-                 CacheManager.getCachedData().epgUrls.length > 0 
-                    ? CacheManager.getCachedData().epgUrls.join(',') 
+            const epgToUse = req.query.epg ||
+                (global.CacheManager.getCachedData().epgUrls &&
+                    global.CacheManager.getCachedData().epgUrls.length > 0
+                    ? global.CacheManager.getCachedData().epgUrls.join(',')
                     : null);
-          
+
             if (epgToUse) {
                 await EPGManager.initializeEPG(epgToUse);
             }
@@ -130,15 +130,15 @@ app.get('/:config/manifest.json', async (req, res) => {
         const configString = Buffer.from(req.params.config, 'base64').toString();
         const decodedConfig = Object.fromEntries(new URLSearchParams(configString));
 
-        if (decodedConfig.m3u && CacheManager.cache.m3uUrl !== decodedConfig.m3u) {
-            await CacheManager.rebuildCache(decodedConfig.m3u);
+        if (decodedConfig.m3u && global.CacheManager.cache.m3uUrl !== decodedConfig.m3u) {
+            await global.CacheManager.rebuildCache(decodedConfig.m3u);
         }
         if (decodedConfig.resolver_script) {
             console.log('Inizializzazione Script Resolver dalla configurazione');
             try {
                 // Scarica lo script Resolver
                 const resolverDownloaded = await PythonResolver.downloadScript(decodedConfig.resolver_script);
-              
+
                 // Se è stato definito un intervallo di aggiornamento, impostalo
                 if (decodedConfig.resolver_update_interval) {
                     console.log('Impostazione dell\'aggiornamento automatico del resolver');
@@ -154,7 +154,7 @@ app.get('/:config/manifest.json', async (req, res) => {
             try {
                 // Scarica lo script Python se non già scaricato
                 await PythonRunner.downloadScript(decodedConfig.python_script_url);
-                
+
                 // Se è stato definito un intervallo di aggiornamento, impostalo
                 if (decodedConfig.python_update_interval) {
                     console.log('Impostazione dell\'aggiornamento automatico del generatore Python');
@@ -165,7 +165,7 @@ app.get('/:config/manifest.json', async (req, res) => {
             }
         }
 
-        const { genres } = CacheManager.getCachedData();
+        const { genres } = global.CacheManager.getCachedData();
         const manifestConfig = {
             ...config.manifest,
             catalogs: [{
@@ -194,24 +194,24 @@ app.get('/:config/manifest.json', async (req, res) => {
         };
 
         const builder = new addonBuilder(manifestConfig);
-        
+
         if (decodedConfig.epg_enabled === 'true') {
             // Se non è stato fornito manualmente un EPG URL, usa quello della playlist
-            const epgToUse = decodedConfig.epg || 
-                (CacheManager.getCachedData().epgUrls && 
-                 CacheManager.getCachedData().epgUrls.length > 0 
-                    ? CacheManager.getCachedData().epgUrls.join(',') 
+            const epgToUse = decodedConfig.epg ||
+                (global.CacheManager.getCachedData().epgUrls &&
+                    global.CacheManager.getCachedData().epgUrls.length > 0
+                    ? global.CacheManager.getCachedData().epgUrls.join(',')
                     : null);
-                    
+
             if (epgToUse) {
                 await EPGManager.initializeEPG(epgToUse);
             }
         }
-        
+
         builder.defineCatalogHandler(async (args) => catalogHandler({ ...args, config: decodedConfig }));
         builder.defineStreamHandler(async (args) => streamHandler({ ...args, config: decodedConfig }));
         builder.defineMetaHandler(async (args) => metaHandler({ ...args, config: decodedConfig }));
-        
+
         res.setHeader('Content-Type', 'application/json');
         res.send(builder.getInterface().manifest);
     } catch (error) {
@@ -223,10 +223,10 @@ app.get('/:config/manifest.json', async (req, res) => {
 // Manteniamo la route esistente per gli altri endpoint
 app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
     const { resource, type, id } = req.params;
-    const extra = req.params.extra 
-        ? safeParseExtra(req.params.extra) 
+    const extra = req.params.extra
+        ? safeParseExtra(req.params.extra)
         : {};
-    
+
     try {
         let result;
         switch (resource) {
@@ -243,7 +243,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
                 next();
                 return;
         }
-        
+
         res.setHeader('Content-Type', 'application/json');
         res.send(result);
     } catch (error) {
@@ -256,7 +256,7 @@ app.get('/:resource/:type/:id/:extra?.json', async (req, res, next) => {
 app.get('/api/resolver/download-template', (req, res) => {
     const PythonResolver = require('./python-resolver');
     const fs = require('fs');
-    
+
     try {
         if (fs.existsSync(PythonResolver.scriptPath)) {
             res.setHeader('Content-Type', 'text/plain');
@@ -274,19 +274,19 @@ app.get('/api/resolver/download-template', (req, res) => {
 function cleanupTempFolder() {
     console.log('\n=== Pulizia cartella temp all\'avvio ===');
     const tempDir = path.join(__dirname, 'temp');
-    
+
     // Controlla se la cartella temp esiste
     if (!fs.existsSync(tempDir)) {
         console.log('Cartella temp non trovata, la creo...');
         fs.mkdirSync(tempDir, { recursive: true });
         return;
     }
-    
+
     try {
         // Leggi tutti i file nella cartella temp
         const files = fs.readdirSync(tempDir);
         let deletedCount = 0;
-        
+
         // Elimina ogni file
         for (const file of files) {
             try {
@@ -300,7 +300,7 @@ function cleanupTempFolder() {
                 console.error(`❌ Errore nell'eliminazione del file ${file}:`, fileError.message);
             }
         }
-        
+
         console.log(`✓ Eliminati ${deletedCount} file temporanei`);
         console.log('=== Pulizia cartella temp completata ===\n');
     } catch (error) {
@@ -311,33 +311,33 @@ function cleanupTempFolder() {
 function safeParseExtra(extraParam) {
     try {
         if (!extraParam) return {};
-        
+
         const decodedExtra = decodeURIComponent(extraParam);
-        
+
         // Supporto per skip con genere
         if (decodedExtra.includes('genre=') && decodedExtra.includes('&skip=')) {
             const parts = decodedExtra.split('&');
             const genre = parts.find(p => p.startsWith('genre=')).split('=')[1];
             const skip = parts.find(p => p.startsWith('skip=')).split('=')[1];
-            
-            return { 
-                genre, 
-                skip: parseInt(skip, 10) || 0 
+
+            return {
+                genre,
+                skip: parseInt(skip, 10) || 0
             };
         }
-        
+
         if (decodedExtra.startsWith('skip=')) {
             return { skip: parseInt(decodedExtra.split('=')[1], 10) || 0 };
         }
-        
+
         if (decodedExtra.startsWith('genre=')) {
             return { genre: decodedExtra.split('=')[1] };
         }
-        
+
         if (decodedExtra.startsWith('search=')) {
             return { search: decodedExtra.split('=')[1] };
         }
-        
+
         try {
             return JSON.parse(decodedExtra);
         } catch {
@@ -354,17 +354,17 @@ app.get('/:config/catalog/:type/:id/:extra?.json', async (req, res) => {
     try {
         const configString = Buffer.from(req.params.config, 'base64').toString();
         const decodedConfig = Object.fromEntries(new URLSearchParams(configString));
-        const extra = req.params.extra 
-            ? safeParseExtra(req.params.extra) 
+        const extra = req.params.extra
+            ? safeParseExtra(req.params.extra)
             : {};
-        
-        const result = await catalogHandler({ 
-            type: req.params.type, 
-            id: req.params.id, 
-            extra, 
-            config: decodedConfig 
+
+        const result = await catalogHandler({
+            type: req.params.type,
+            id: req.params.id,
+            extra,
+            config: decodedConfig
         });
-        
+
         res.setHeader('Content-Type', 'application/json');
         res.send(result);
     } catch (error) {
@@ -378,13 +378,13 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
     try {
         const configString = Buffer.from(req.params.config, 'base64').toString();
         const decodedConfig = Object.fromEntries(new URLSearchParams(configString));
-        
-        const result = await streamHandler({ 
-            type: req.params.type, 
-            id: req.params.id, 
-            config: decodedConfig 
+
+        const result = await streamHandler({
+            type: req.params.type,
+            id: req.params.id,
+            config: decodedConfig
         });
-        
+
         res.setHeader('Content-Type', 'application/json');
         res.send(result);
     } catch (error) {
@@ -398,13 +398,13 @@ app.get('/:config/meta/:type/:id.json', async (req, res) => {
     try {
         const configString = Buffer.from(req.params.config, 'base64').toString();
         const decodedConfig = Object.fromEntries(new URLSearchParams(configString));
-        
-        const result = await metaHandler({ 
-            type: req.params.type, 
-            id: req.params.id, 
-            config: decodedConfig 
+
+        const result = await metaHandler({
+            type: req.params.type,
+            id: req.params.id,
+            config: decodedConfig
         });
-        
+
         res.setHeader('Content-Type', 'application/json');
         res.send(result);
     } catch (error) {
@@ -426,7 +426,7 @@ app.get('/generated-m3u', (req, res) => {
 
 app.post('/api/resolver', async (req, res) => {
     const { action, url, interval } = req.body;
-    
+
     try {
         if (action === 'download' && url) {
             const success = await PythonResolver.downloadScript(url);
@@ -438,8 +438,8 @@ app.post('/api/resolver', async (req, res) => {
         } else if (action === 'create-template') {
             const success = await PythonResolver.createScriptTemplate();
             if (success) {
-                res.json({ 
-                    success: true, 
+                res.json({
+                    success: true,
                     message: 'Template script resolver creato con successo',
                     scriptPath: PythonResolver.scriptPath
                 });
@@ -448,9 +448,9 @@ app.post('/api/resolver', async (req, res) => {
             }
         } else if (action === 'check-health') {
             const isHealthy = await PythonResolver.checkScriptHealth();
-            res.json({ 
-                success: isHealthy, 
-                message: isHealthy ? 'Script resolver valido' : PythonResolver.getStatus().lastError 
+            res.json({
+                success: isHealthy,
+                message: isHealthy ? 'Script resolver valido' : PythonResolver.getStatus().lastError
             });
         } else if (action === 'status') {
             res.json(PythonResolver.getStatus());
@@ -460,18 +460,18 @@ app.post('/api/resolver', async (req, res) => {
         } else if (action === 'schedule' && interval) {
             const success = PythonResolver.scheduleUpdate(interval);
             if (success) {
-                res.json({ 
-                    success: true, 
-                    message: `Aggiornamento automatico impostato ogni ${interval}` 
+                res.json({
+                    success: true,
+                    message: `Aggiornamento automatico impostato ogni ${interval}`
                 });
             } else {
                 res.status(500).json({ success: false, message: PythonResolver.getStatus().lastError });
             }
         } else if (action === 'stopSchedule') {
             const stopped = PythonResolver.stopScheduledUpdates();
-            res.json({ 
-                success: true, 
-                message: stopped ? 'Aggiornamento automatico fermato' : 'Nessun aggiornamento pianificato da fermare' 
+            res.json({
+                success: true,
+                message: stopped ? 'Aggiornamento automatico fermato' : 'Nessun aggiornamento pianificato da fermare'
             });
         } else {
             res.status(400).json({ success: false, message: 'Azione non valida' });
@@ -490,13 +490,13 @@ app.post('/api/rebuild-cache', async (req, res) => {
         }
 
         console.log('🔄 Richiesta di ricostruzione cache ricevuta');
-        await CacheManager.rebuildCache(req.body.m3u, req.body);
-        
+        await global.CacheManager.rebuildCache(req.body.m3u, req.body);
+
         if (req.body.epg_enabled === 'true') {
             console.log('📡 Ricostruzione EPG in corso...');
-            const epgToUse = req.body.epg || 
-                (CacheManager.getCachedData().epgUrls && CacheManager.getCachedData().epgUrls.length > 0 
-                    ? CacheManager.getCachedData().epgUrls.join(',') 
+            const epgToUse = req.body.epg ||
+                (global.CacheManager.getCachedData().epgUrls && global.CacheManager.getCachedData().epgUrls.length > 0
+                    ? global.CacheManager.getCachedData().epgUrls.join(',')
                     : null);
             if (epgToUse) {
                 await EPGManager.initializeEPG(epgToUse);
@@ -504,7 +504,7 @@ app.post('/api/rebuild-cache', async (req, res) => {
         }
 
         res.json({ success: true, message: 'Cache e EPG ricostruiti con successo' });
-       
+
     } catch (error) {
         console.error('Errore nella ricostruzione della cache:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -514,7 +514,7 @@ app.post('/api/rebuild-cache', async (req, res) => {
 // Endpoint API per le operazioni sullo script Python
 app.post('/api/python-script', async (req, res) => {
     const { action, url, interval } = req.body;
-    
+
     try {
         if (action === 'download' && url) {
             const success = await PythonRunner.downloadScript(url);
@@ -526,10 +526,10 @@ app.post('/api/python-script', async (req, res) => {
         } else if (action === 'execute') {
             const success = await PythonRunner.executeScript();
             if (success) {
-                res.json({ 
-                    success: true, 
-                    message: 'Script eseguito con successo', 
-                    m3uUrl: `${req.protocol}://${req.get('host')}/generated-m3u` 
+                res.json({
+                    success: true,
+                    message: 'Script eseguito con successo',
+                    m3uUrl: `${req.protocol}://${req.get('host')}/generated-m3u`
                 });
             } else {
                 res.status(500).json({ success: false, message: PythonRunner.getStatus().lastError });
@@ -539,18 +539,18 @@ app.post('/api/python-script', async (req, res) => {
         } else if (action === 'schedule' && interval) {
             const success = PythonRunner.scheduleUpdate(interval);
             if (success) {
-                res.json({ 
-                    success: true, 
-                    message: `Aggiornamento automatico impostato ogni ${interval}` 
+                res.json({
+                    success: true,
+                    message: `Aggiornamento automatico impostato ogni ${interval}`
                 });
             } else {
                 res.status(500).json({ success: false, message: PythonRunner.getStatus().lastError });
             }
         } else if (action === 'stopSchedule') {
             const stopped = PythonRunner.stopScheduledUpdates();
-            res.json({ 
-                success: true, 
-                message: stopped ? 'Aggiornamento automatico fermato' : 'Nessun aggiornamento pianificato da fermare' 
+            res.json({
+                success: true,
+                message: stopped ? 'Aggiornamento automatico fermato' : 'Nessun aggiornamento pianificato da fermare'
             });
         } else {
             res.status(400).json({ success: false, message: 'Azione non valida' });
@@ -561,21 +561,24 @@ app.post('/api/python-script', async (req, res) => {
     }
 });
 async function startAddon() {
-   cleanupTempFolder();
+    cleanupTempFolder();
 
-   try {
-       const port = process.env.PORT || 10000;
-       app.listen(port, () => {
-          console.log('=============================\n');
-          console.log('OMG ADDON Avviato con successo');
-          console.log('Visita la pagina web per generare la configurazione del manifest e installarla su stremio');
-          console.log('Link alla pagina di configurazione:', `http://localhost:${port}`);
-          console.log('=============================\n');
+    // Inizializza CacheManager
+    global.CacheManager = await CacheManagerFactory(config);
+
+    try {
+        const port = process.env.PORT || 10000;
+        app.listen(port, () => {
+            console.log('=============================\n');
+            console.log('OMG ADDON Avviato con successo');
+            console.log('Visita la pagina web per generare la configurazione del manifest e installarla su stremio');
+            console.log('Link alla pagina di configurazione:', `http://localhost:${port}`);
+            console.log('=============================\n');
         });
-   } catch (error) {
-       console.error('Failed to start addon:', error);
-       process.exit(1);
-   }
+    } catch (error) {
+        console.error('Failed to start addon:', error);
+        process.exit(1);
+    }
 }
 
 startAddon();
